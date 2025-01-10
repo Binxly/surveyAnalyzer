@@ -1,11 +1,22 @@
 import { parse } from 'csv-parse/sync';
-import OpenAI from 'openai';
+import { OpenAIClient, AzureKeyCredential } from "@azure/openai";
+import * as dotenv from 'dotenv';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
+dotenv.config();
+
+function getClient() {
+  if (typeof window !== 'undefined') return null;
+  
+  return new OpenAIClient(
+    process.env.AZURE_OPENAI_ENDPOINT || '',
+    new AzureKeyCredential(process.env.AZURE_OPENAI_API_KEY || '')
+  );
+}
 
 export async function processCSV(buffer: ArrayBuffer) {
+  const client = getClient();
+  if (!client) throw new Error('OpenAI client can only be used server-side');
+  
   const content = new TextDecoder().decode(buffer);
   const records = parse(content, { columns: true });
 
@@ -13,7 +24,7 @@ export async function processCSV(buffer: ArrayBuffer) {
   const results = [];
 
   for (const question of questions) {
-    const answers = records.map(record => record[question]);
+    const answers = records.map((record: any) => record[question]);
     const prompt = createPrompt(question, answers);
     const analysis = await callAIAPI(prompt, question);
     results.push({ question, analysis });
@@ -81,14 +92,16 @@ Format your response as follows:
 ### Explanation
 [Your explanation here]`;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
+  const response = await client.getChatCompletions(
+    process.env.AZURE_OPENAI_DEPLOYMENT_NAME || '',
+    [
       { role: "system", content: systemMessage },
       { role: "user", content: prompt }
     ],
-    max_tokens: 2000
-  });
+    {
+      maxTokens: 2000
+    }
+  );
 
-  return response.choices[0].message.content.trim();
+  return response.choices[0].message.content;
 }
